@@ -367,7 +367,7 @@ function StroopApp() {
     // Read from the ref so we always have the latest values, regardless of React batching
     const fbTimed   = feedbackRef.current.timed   || {};
     const fbUntimed = feedbackRef.current.untimed || {};
-    console.log('[Stroop] Feedback being submitted — timed:', fbTimed, 'untimed:', fbUntimed);
+    console.log('[Stroop] Feedback being submitted - timed:', fbTimed, 'untimed:', fbUntimed);
 
     // Build ONE row per session containing both conditions
     const fields = (prefix, s, fb) => ({
@@ -407,7 +407,7 @@ function StroopApp() {
     try {
       const key = `stroop_${participant.id}_${Date.now()}`;
       localStorage.setItem(key, JSON.stringify(payload));
-    } catch (e) { /* quota or private mode — ignore */ }
+    } catch (e) { /* quota or private mode - ignore */ }
 
     try {
       // Use no-cors (Apps Script returns a 302 redirect to the actual content
