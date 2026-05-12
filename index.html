@@ -22,7 +22,7 @@ const { useState, useEffect, useRef, useCallback } = React;
 /* ===========================================================
    ===  PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL HERE  ======
    =========================================================== */
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbylTo9C0KQ_8W59f7TLXItThCUThIABlXIslqlYQGbhfQ3z6Lgt2sVz7kd0-vO-lluY/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzlXZaOBOFZ8k5nC2awnlucVPKnFrtNR0ADItqvGO-xeIPF7shLWvEEkGEZQuowdr9h/exec";
 
 // ---------- Experiment configuration ----------
 const COLORS = [
@@ -367,7 +367,7 @@ function StroopApp() {
     // Read from the ref so we always have the latest values, regardless of React batching
     const fbTimed   = feedbackRef.current.timed   || {};
     const fbUntimed = feedbackRef.current.untimed || {};
-    console.log('[Stroop] Feedback being submitted - timed:', fbTimed, 'untimed:', fbUntimed);
+    console.log('[Stroop] Feedback being submitted — timed:', fbTimed, 'untimed:', fbUntimed);
 
     // Build ONE row per session containing both conditions
     const fields = (prefix, s, fb) => ({
@@ -407,7 +407,7 @@ function StroopApp() {
     try {
       const key = `stroop_${participant.id}_${Date.now()}`;
       localStorage.setItem(key, JSON.stringify(payload));
-    } catch (e) { /* quota or private mode - ignore */ }
+    } catch (e) { /* quota or private mode — ignore */ }
 
     try {
       // Use no-cors (Apps Script returns a 302 redirect to the actual content
@@ -677,7 +677,7 @@ function StroopApp() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full text-center">
           <div className="text-7xl mb-6">&#128522;</div>
-          <h2 className="text-3xl font-semibold text-slate-800">Session complete, thank you!</h2>
+          <h2 className="text-3xl font-semibold text-slate-800">Session complete &#8212; thank you!</h2>
           <div className="mt-6">
             {submitStatus === 'sending' && (
               <div className="flex items-center justify-center gap-2 text-slate-500 text-sm">
