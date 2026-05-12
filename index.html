@@ -170,6 +170,7 @@ function StroopApp() {
   // Per-condition feedback ratings
   const [feedbackByCondition, setFeedbackByCondition] = useState({}); // { timed: {...}, untimed: {...} }
   const [currentRatings, setCurrentRatings] = useState({ difficulty: 0, timePressure: 0, cognitiveLoad: 0 });
+  const feedbackRef = useRef({}); // mirror of feedbackByCondition, always sync at submit time
 
   const [submitStatus, setSubmitStatus] = useState('idle');
 
@@ -210,6 +211,8 @@ function StroopApp() {
     const newId = generateParticipantId();
     const newOrder = Math.random() < 0.5 ? 'timed_first' : 'untimed_first';
     console.log(`[Stroop] New session: id=${newId} order=${newOrder}`);
+    feedbackRef.current = {}; // reset feedback ref for new session
+    setFeedbackByCondition({});
     setParticipant(prev => ({ ...prev, id: newId }));
     setConditionOrder(newOrder);
     setScreen('instructions');
@@ -270,7 +273,15 @@ function StroopApp() {
   const handleFeedbackSubmit = () => {
     if (!currentRatings.difficulty || !currentRatings.timePressure || !currentRatings.cognitiveLoad) return;
     const cond = currentCondition;
-    setFeedbackByCondition(prev => ({ ...prev, [cond]: { ...currentRatings } }));
+    const ratings = { ...currentRatings };
+
+    // Keep BOTH the ref (synchronous) and state (for UI) in sync
+    const updated = { ...feedbackRef.current, [cond]: ratings };
+    feedbackRef.current = updated;
+    setFeedbackByCondition(updated);
+
+    console.log(`[Stroop] Feedback recorded for ${cond}:`, ratings);
+    console.log('[Stroop] All feedback collected so far:', updated);
 
     if (blockIndex === 0) {
       setBlockIndex(1);
@@ -353,8 +364,10 @@ function StroopApp() {
     setSubmitStatus('sending');
     const sTimed   = summarize(data, 'timed');
     const sUntimed = summarize(data, 'untimed');
-    const fbTimed   = feedbackByCondition.timed   || {};
-    const fbUntimed = feedbackByCondition.untimed || {};
+    // Read from the ref so we always have the latest values, regardless of React batching
+    const fbTimed   = feedbackRef.current.timed   || {};
+    const fbUntimed = feedbackRef.current.untimed || {};
+    console.log('[Stroop] Feedback being submitted — timed:', fbTimed, 'untimed:', fbUntimed);
 
     // Build ONE row per session containing both conditions
     const fields = (prefix, s, fb) => ({
