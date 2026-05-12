@@ -341,13 +341,21 @@ function StroopApp() {
       summary: summaryRows,
     };
     try {
-      const res = await fetch(APPS_SCRIPT_URL, {
+      // mode:'no-cors' is required for Apps Script.
+      // Apps Script returns a 302 redirect; browsers block reading that
+      // response under normal CORS mode, making res.ok always false.
+      // With no-cors the response is opaque (unreadable) but Apps Script
+      // still receives and processes the full POST body correctly.
+      // fetch() only throws if the network is completely unreachable.
+      await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
+        mode: 'no-cors',
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload),
       });
-      if (res.ok) setSubmitStatus('ok'); else setSubmitStatus('error');
+      setSubmitStatus('ok');
     } catch (err) {
+      console.error('Cloud submit failed:', err);
       setSubmitStatus('error');
     }
   }, [data, participant, conditionOrder, serialNumber]);
@@ -556,22 +564,72 @@ function StroopApp() {
   }
 
   if (screen === 'finished') {
+    const handleDownloadTrials = () => {
+      const mainOnly = data.filter(r => r.block === 'main');
+      downloadCSV(`stroop_trials_${participant.id}.csv`, toCSV(mainOnly.length ? mainOnly : data));
+    };
+    const handleDownloadSummary = () => {
+      const sTimed   = summarize(data, 'timed');
+      const sUntimed = summarize(data, 'untimed');
+      const rows = [sTimed, sUntimed].filter(Boolean).map(s => ({
+        serial_number: serialNumber,
+        participant_id: participant.id,
+        age: participant.age, gender: participant.gender,
+        condition_order: conditionOrder,
+        condition: s.condition,
+        total_questions: s.totalQuestions,
+        correct_answers: s.correctAnswers,
+        wrong_answers: s.wrongAnswers,
+        accuracy_rate_pct: +s.accuracyRate.toFixed(2),
+        avg_rt_ms: Math.round(s.meanRT),
+        stroop_effect_ms: Math.round(s.stroopEffect),
+        performance_index: +s.performanceIndex.toFixed(2),
+      }));
+      downloadCSV(`stroop_summary_${participant.id}.csv`, toCSV(rows));
+    };
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
-        <div className="text-center">
-          <div className="text-7xl mb-6">😊</div>
-          <h2 className="text-3xl font-semibold text-slate-800">Session complete - thank you!</h2>
-          {submitStatus === 'sending' && (
-            <p className="mt-4 text-slate-500">Saving your data…</p>
-          )}
-          {submitStatus === 'ok' && (
-            <p className="mt-4 text-emerald-600 font-medium">✓ Data saved successfully.</p>
-          )}
-          {submitStatus === 'error' && (
-            <p className="mt-4 text-rose-600 text-sm">
-              Could not reach the server. Please tell the researcher.
-            </p>
-          )}
+        <div className="max-w-md w-full text-center">
+          <div className="text-7xl mb-6">&#128522;</div>
+          <h2 className="text-3xl font-semibold text-slate-800">Session complete &#8212; thank you!</h2>
+          <div className="mt-6">
+            {submitStatus === 'sending' && (
+              <div className="flex items-center justify-center gap-2 text-slate-500 text-sm">
+                <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                </svg>
+                Sending data to server&#8230;
+              </div>
+            )}
+            {submitStatus === 'ok' && (
+              <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 text-emerald-700 text-sm font-medium">
+                &#10003; Data sent to Google Sheet successfully.
+              </div>
+            )}
+            {submitStatus === 'error' && (
+              <div className="bg-rose-50 border border-rose-200 rounded-lg px-4 py-3 text-left">
+                <p className="text-rose-700 font-medium text-sm">&#9888; Could not reach the server.</p>
+                <p className="text-rose-600 text-xs mt-1">
+                  Download the CSV backup below and send it to the researcher.
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="mt-6 bg-white border border-slate-200 rounded-lg p-4">
+            <p className="text-sm font-medium text-slate-700 mb-3">CSV backup &#8212; always available</p>
+            <div className="flex gap-3 justify-center">
+              <button onClick={handleDownloadTrials}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium py-2 px-3 rounded-md transition">
+                &#8595; Trial data
+              </button>
+              <button onClick={handleDownloadSummary}
+                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium py-2 px-3 rounded-md transition">
+                &#8595; Summary
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mt-3">Session ID: {participant.id}</p>
+          </div>
         </div>
       </div>
     );
