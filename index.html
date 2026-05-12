@@ -20,10 +20,9 @@
 const { useState, useEffect, useRef, useCallback } = React;
 
 /* ===========================================================
-   ===  EDIT THIS LINE BEFORE DEPLOYING  =====================
-   Paste the Google Apps Script Web App URL between the quotes.
+   ===  PASTE YOUR GOOGLE APPS SCRIPT WEB APP URL HERE  ======
    =========================================================== */
-const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbylTo9C0KQ_8W59f7TLXItThCUThIABlXIslqlYQGbhfQ3z6Lgt2sVz7kd0-vO-lluY/exec";
+const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzlXZaOBOFZ8k5nC2awnlucVPKnFrtNR0ADItqvGO-xeIPF7shLWvEEkGEZQuowdr9h/exec";
 
 // ---------- Experiment configuration ----------
 const COLORS = [
@@ -33,9 +32,14 @@ const COLORS = [
   { name: 'YELLOW', hex: '#ca8a04', key: 'y' },
 ];
 const PRACTICE_TRIALS   = 8;
-const BLOCK_DURATION_MS = 60_000;   // 60 s hard cutoff for BOTH conditions
+const BLOCK_DURATION_MS = 60_000;
 const FIXATION_MS       = 250;
 const ITI_MS            = 150;
+
+// Performance Index benchmarks
+const EXPECTED_ANSWERS  = 40;     // benchmark for efficiency component
+const TARGET_RT_MS      = 1500;   // benchmark for speed component (1.5 s = excellent)
+const MIN_VALID_ANSWERS = 5;      // below this, severe data-completeness penalty
 
 // ---------- Helpers ----------
 function makeTrial() {
@@ -75,9 +79,12 @@ function downloadCSV(filename, csv) {
   URL.revokeObjectURL(url);
 }
 
+// Updated Performance Index formula:
+//   PI = Efficiency × Accuracy × Speed × DataCompleteness × 100
 function summarize(rows, label) {
   const main = rows.filter(r => r.block === 'main' && r.condition === label);
   if (!main.length) return null;
+
   const responded = main.filter(r => r.response !== '');
   const correct   = responded.filter(r => r.correct);
   const wrong     = responded.filter(r => !r.correct);
@@ -85,26 +92,64 @@ function summarize(rows, label) {
   const totalQuestions = main.length;
   const correctAnswers = correct.length;
   const wrongAnswers   = wrong.length;
-  const accuracyRate = totalQuestions ? (correctAnswers / totalQuestions) * 100 : 0;
-  const errorRate    = totalQuestions ? (wrongAnswers   / totalQuestions) * 100 : 0;
-  const meanRT = correct.length ? correct.reduce((a,b)=>a+b.rt_ms,0) / correct.length : 0;
+  const accuracyRate   = totalQuestions ? (correctAnswers / totalQuestions) * 100 : 0;
+  const errorRate      = totalQuestions ? (wrongAnswers   / totalQuestions) * 100 : 0;
 
-  const durationSec = BLOCK_DURATION_MS / 1000;
-  const questionRate       = (totalQuestions / durationSec) * 60;
+  // Average response time across ALL responses (correct + incorrect),
+  // as in the spec ("Mean of all response times").
+  const allResponded = responded.filter(r => typeof r.rt_ms === 'number');
+  const meanRT = allResponded.length
+    ? allResponded.reduce((a,b) => a + b.rt_ms, 0) / allResponded.length
+    : 0;
+
+  const durationSec        = BLOCK_DURATION_MS / 1000;
+  const questionRate       = (totalQuestions / durationSec) * 60;     // questions / minute
+  const questionsPerSecond = totalQuestions / durationSec;            // for Question-Rate diagnostic
   const taskCompletionRate = totalQuestions ? (responded.length / totalQuestions) * 100 : 0;
-  const performanceIndex   = (correctAnswers / durationSec) * (accuracyRate / 100) * 100;
 
+  // ── Performance Index components ──────────────────────────────────────
+  const efficiency      = Math.min(1, totalQuestions / EXPECTED_ANSWERS);
+  const accuracyComp    = totalQuestions ? correctAnswers / totalQuestions : 0;
+  const speed           = meanRT > 0 ? Math.min(1, TARGET_RT_MS / meanRT) : 0;
+  const dataCompleteness = totalQuestions >= MIN_VALID_ANSWERS ? 1 : 0.1;
+  const performanceIndex = efficiency * accuracyComp * speed * dataCompleteness * 100;
+
+  // Stroop effect (diagnostic)
   const cCon = correct.filter(r => r.congruent);
   const cInc = correct.filter(r => !r.congruent);
   const rtCon = cCon.length ? cCon.reduce((a,b)=>a+b.rt_ms,0)/cCon.length : 0;
   const rtInc = cInc.length ? cInc.reduce((a,b)=>a+b.rt_ms,0)/cInc.length : 0;
 
   return {
-    condition: label, totalQuestions, correctAnswers, wrongAnswers,
+    condition: label,
+    totalQuestions, correctAnswers, wrongAnswers,
     accuracyRate, errorRate, meanRT,
-    questionRate, taskCompletionRate, performanceIndex,
+    questionRate, questionsPerSecond, taskCompletionRate,
+    efficiency, accuracyComp, speed, dataCompleteness, performanceIndex,
     stroopEffect: rtInc - rtCon,
   };
+}
+
+// ---------- Likert button row ----------
+function LikertRow({ value, onChange }) {
+  return (
+    <div className="flex gap-2 justify-center">
+      {[1,2,3,4,5].map(n => (
+        <button
+          key={n}
+          type="button"
+          onClick={() => onChange(n)}
+          className={`flex-1 max-w-[68px] py-3 rounded-md font-semibold border-2 transition ${
+            value === n
+              ? 'bg-blue-600 border-blue-600 text-white'
+              : 'bg-white border-slate-300 text-slate-700 hover:border-blue-400 hover:bg-blue-50'
+          }`}
+        >
+          {n}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 // ---------- Main component ----------
@@ -112,8 +157,6 @@ function StroopApp() {
   const [screen, setScreen] = useState('setup');
   const [participant, setParticipant] = useState({ id: '', age: '', gender: '' });
   const [conditionOrder, setConditionOrder] = useState('timed_first');
-  const [serialNumber, setSerialNumber] = useState(null);   // ← participant serial #
-  const [isLoadingSession, setIsLoadingSession] = useState(false);
   const [blockIndex, setBlockIndex] = useState(0);
 
   const [practiceIdx, setPracticeIdx] = useState(0);
@@ -123,6 +166,10 @@ function StroopApp() {
   const [data, setData] = useState([]);
   const [practiceFeedback, setPracticeFeedback] = useState(null);
   const [blockElapsedMs, setBlockElapsedMs] = useState(0);
+
+  // Per-condition feedback ratings
+  const [feedbackByCondition, setFeedbackByCondition] = useState({}); // { timed: {...}, untimed: {...} }
+  const [currentRatings, setCurrentRatings] = useState({ difficulty: 0, timePressure: 0, cognitiveLoad: 0 });
 
   const [submitStatus, setSubmitStatus] = useState('idle');
 
@@ -136,16 +183,18 @@ function StroopApp() {
   const phaseRef         = useRef('idle');
   const currentTrialRef  = useRef(null);
   const trialCounterRef  = useRef(0);
-  const serialRef        = useRef(null);       // ← keep serial in ref for closures
 
   useEffect(() => { phaseRef.current = phase; }, [phase]);
   useEffect(() => { currentTrialRef.current = currentTrial; }, [currentTrial]);
-  useEffect(() => { serialRef.current = serialNumber; }, [serialNumber]);
 
+  // Resolve current condition (works in main, feedback, and break screens)
   const currentCondition = (() => {
     if (screen === 'practice') return 'practice';
-    const order = conditionOrder === 'timed_first' ? ['timed','untimed'] : ['untimed','timed'];
-    return order[blockIndex];
+    if (screen === 'main' || screen === 'feedback' || screen === 'break') {
+      const order = conditionOrder === 'timed_first' ? ['timed','untimed'] : ['untimed','timed'];
+      return order[blockIndex];
+    }
+    return null;
   })();
   const isTimedVisible = currentCondition === 'timed';
 
@@ -156,31 +205,13 @@ function StroopApp() {
     clearInterval(tickerRef.current);
   };
 
-  // ---- Setup: fetch participant number from Apps Script (strictly alternating order) ----
-  const handleStartSession = async () => {
-    setIsLoadingSession(true);
+  // ---- Setup: pure-random order, with clear console log so you can verify ----
+  const handleStartSession = () => {
     const newId = generateParticipantId();
-
-    let pNum = 0;
-    let newOrder = Math.random() < 0.5 ? 'timed_first' : 'untimed_first'; // fallback
-
-    try {
-      const res = await fetch(`${APPS_SCRIPT_URL}?action=getParticipantNumber`);
-      const json = await res.json();
-      if (json.ok && json.participantNumber) {
-        pNum = json.participantNumber;
-        // Odd serial  → timed first   (1, 3, 5, …)
-        // Even serial → untimed first (2, 4, 6, …)
-        newOrder = pNum % 2 === 1 ? 'timed_first' : 'untimed_first';
-      }
-    } catch (err) {
-      console.warn('Could not fetch participant number – falling back to random order:', err);
-    }
-
-    setSerialNumber(pNum);
+    const newOrder = Math.random() < 0.5 ? 'timed_first' : 'untimed_first';
+    console.log(`[Stroop] New session: id=${newId} order=${newOrder}`);
     setParticipant(prev => ({ ...prev, id: newId }));
     setConditionOrder(newOrder);
-    setIsLoadingSession(false);
     setScreen('instructions');
   };
 
@@ -201,10 +232,7 @@ function StroopApp() {
     blockActiveRef.current = true;
     blockStartRef.current = performance.now();
 
-    // HARD 60-second cutoff for BOTH conditions (visible or hidden timer)
     blockEndTimer.current = setTimeout(() => endMainBlock(), BLOCK_DURATION_MS);
-
-    // Ticker for elapsed time (used by visible timer + as a record)
     tickerRef.current = setInterval(() => {
       setBlockElapsedMs(Math.min(performance.now() - blockStartRef.current, BLOCK_DURATION_MS));
     }, 100);
@@ -214,15 +242,15 @@ function StroopApp() {
     blockActiveRef.current = false;
     clearAllTimers();
 
-    // If we were showing a stimulus that never got a response, log it as incomplete
+    // If a stimulus was on screen and never got a response, log as incomplete
     if (phaseRef.current === 'stimulus' && currentTrialRef.current) {
       const trial = currentTrialRef.current;
+      const order = conditionOrder === 'timed_first' ? ['timed','untimed'] : ['untimed','timed'];
       const incompleteRow = {
-        serial_number: serialRef.current,
         participant_id: participant.id,
         age: participant.age, gender: participant.gender,
         condition_order: conditionOrder,
-        condition: currentCondition,
+        condition: order[blockIndex],
         block: 'main',
         trial_num: trialCounterRef.current,
         word: trial.word, ink_color: trial.inkColor,
@@ -235,8 +263,21 @@ function StroopApp() {
     }
 
     setPhase('idle');
-    if (blockIndex === 0) { setBlockIndex(1); setScreen('break'); }
-    else { setScreen('finished'); }
+    setCurrentRatings({ difficulty: 0, timePressure: 0, cognitiveLoad: 0 });
+    setScreen('feedback');
+  };
+
+  const handleFeedbackSubmit = () => {
+    if (!currentRatings.difficulty || !currentRatings.timePressure || !currentRatings.cognitiveLoad) return;
+    const cond = currentCondition;
+    setFeedbackByCondition(prev => ({ ...prev, [cond]: { ...currentRatings } }));
+
+    if (blockIndex === 0) {
+      setBlockIndex(1);
+      setScreen('break');
+    } else {
+      setScreen('finished');
+    }
   };
 
   // Phase advancement
@@ -274,7 +315,6 @@ function StroopApp() {
     const correct = key === currentTrial.correctKey;
     const trialNum = screen === 'practice' ? practiceIdx + 1 : trialCounterRef.current;
     const row = {
-      serial_number: serialRef.current,
       participant_id: participant.id,
       age: participant.age, gender: participant.gender,
       condition_order: conditionOrder,
@@ -313,58 +353,74 @@ function StroopApp() {
     setSubmitStatus('sending');
     const sTimed   = summarize(data, 'timed');
     const sUntimed = summarize(data, 'untimed');
-    const summaryRows = [];
-    for (const s of [sTimed, sUntimed]) {
-      if (!s) continue;
-      summaryRows.push({
-        serial_number: serialNumber,
-        submitted_at: new Date().toISOString(),
-        participant_id: participant.id,
-        age: participant.age, gender: participant.gender,
-        condition_order: conditionOrder, notes: '',
-        condition: s.condition,
-        performance_index: +s.performanceIndex.toFixed(2),
-        question_rate_per_min: +s.questionRate.toFixed(2),
-        accuracy_rate_pct: +s.accuracyRate.toFixed(2),
-        avg_response_time_ms: Math.round(s.meanRT),
-        total_questions: s.totalQuestions,
-        wrong_answers: s.wrongAnswers,
-        error_rate_pct: +s.errorRate.toFixed(2),
-        task_completion_rate_pct: +s.taskCompletionRate.toFixed(2),
-        block_duration_ms: BLOCK_DURATION_MS,
-        stroop_effect_ms: Math.round(s.stroopEffect),
-      });
-    }
+    const fbTimed   = feedbackByCondition.timed   || {};
+    const fbUntimed = feedbackByCondition.untimed || {};
+
+    // Build ONE row per session containing both conditions
+    const fields = (prefix, s, fb) => ({
+      [`${prefix}_performance_index`]:        s ? +s.performanceIndex.toFixed(2) : '',
+      [`${prefix}_question_rate_per_min`]:    s ? +s.questionRate.toFixed(2) : '',
+      [`${prefix}_accuracy_rate_pct`]:        s ? +s.accuracyRate.toFixed(2) : '',
+      [`${prefix}_avg_response_time_ms`]:     s ? Math.round(s.meanRT) : '',
+      [`${prefix}_total_questions`]:          s ? s.totalQuestions : '',
+      [`${prefix}_correct_answers`]:          s ? s.correctAnswers : '',
+      [`${prefix}_wrong_answers`]:            s ? s.wrongAnswers : '',
+      [`${prefix}_error_rate_pct`]:           s ? +s.errorRate.toFixed(2) : '',
+      [`${prefix}_task_completion_rate_pct`]: s ? +s.taskCompletionRate.toFixed(2) : '',
+      [`${prefix}_stroop_effect_ms`]:         s ? Math.round(s.stroopEffect) : '',
+      [`${prefix}_perceived_difficulty`]:       fb.difficulty    || '',
+      [`${prefix}_perceived_time_pressure`]:    fb.timePressure  || '',
+      [`${prefix}_subjective_cognitive_load`]:  fb.cognitiveLoad || '',
+    });
+
+    const combinedRow = {
+      submitted_at: new Date().toISOString(),
+      participant_id: participant.id,
+      age: participant.age,
+      gender: participant.gender,
+      condition_order: conditionOrder,
+      ...fields('timed',   sTimed,   fbTimed),
+      ...fields('untimed', sUntimed, fbUntimed),
+    };
+
     const payload = {
       session_id: `${participant.id}_${Date.now()}`,
-      trials: data,
-      summary: summaryRows,
+      summary: [combinedRow],
     };
+
+    // Always print payload to console as last-resort manual backup
+    console.log('[Stroop] Submitting payload:', payload);
+    // Also save to localStorage as recovery backup
     try {
-      // mode:'no-cors' is required for Apps Script.
-      // Apps Script returns a 302 redirect; browsers block reading that
-      // response under normal CORS mode, making res.ok always false.
-      // With no-cors the response is opaque (unreadable) but Apps Script
-      // still receives and processes the full POST body correctly.
-      // fetch() only throws if the network is completely unreachable.
+      const key = `stroop_${participant.id}_${Date.now()}`;
+      localStorage.setItem(key, JSON.stringify(payload));
+    } catch (e) { /* quota or private mode — ignore */ }
+
+    try {
+      // Use no-cors (Apps Script returns a 302 redirect to the actual content
+      // which browsers block under standard CORS). With no-cors the body is
+      // still delivered; we just can't read the response status.
+      // Also use keepalive so the request survives page navigation.
       await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
         mode: 'no-cors',
+        keepalive: true,
         headers: { 'Content-Type': 'text/plain;charset=utf-8' },
         body: JSON.stringify(payload),
       });
       setSubmitStatus('ok');
     } catch (err) {
-      console.error('Cloud submit failed:', err);
+      console.error('[Stroop] Cloud submit failed:', err);
       setSubmitStatus('error');
     }
-  }, [data, participant, conditionOrder, serialNumber]);
+  }, [data, participant, conditionOrder, feedbackByCondition]);
 
   useEffect(() => {
     if (screen === 'finished' && submitStatus === 'idle') submitToCloud();
   }, [screen, submitStatus, submitToCloud]);
 
   // ---------- UI ----------
+
   if (screen === 'setup') {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
@@ -391,21 +447,13 @@ function StroopApp() {
             </div>
           </div>
           <button
-            disabled={!participant.age.toString().trim() || !participant.gender || isLoadingSession}
+            disabled={!participant.age.toString().trim() || !participant.gender}
             onClick={handleStartSession}
-            className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium py-3 rounded-md transition flex items-center justify-center gap-2">
-            {isLoadingSession ? (
-              <>
-                <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
-                </svg>
-                Assigning session…
-              </>
-            ) : 'Continue to Instructions'}
+            className="mt-6 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium py-3 rounded-md transition">
+            Continue to Instructions
           </button>
           <p className="text-xs text-slate-500 mt-4 text-center">
-            You will complete two 60-second blocks. A unique session ID will be assigned automatically.
+            Two 60-second blocks. Order is randomized for each participant.
           </p>
         </div>
       </div>
@@ -437,7 +485,7 @@ function StroopApp() {
             <p>Example: <span style={{color:'#2563eb'}} className="font-bold text-xl">RED</span> &rarr; press&nbsp;
               <kbd className="px-2 py-1 bg-slate-100 border border-slate-300 rounded font-bold">B</kbd> (ink is blue).</p>
             <p>Short <strong>{PRACTICE_TRIALS}-trial practice</strong> first, then <strong>two 60-second blocks</strong>.
-              Answer as many as you can - accuracy matters too.</p>
+              After each block you'll answer 3 short feedback questions.</p>
           </div>
           <button onClick={startPractice}
             className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-md transition">
@@ -456,7 +504,7 @@ function StroopApp() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-2xl w-full bg-white rounded-lg shadow-md p-8">
           <h2 className="text-2xl font-bold text-slate-800 mb-4">
-            {isPostPractice ? 'Practice complete' : 'Block complete - take a short break'}
+            {isPostPractice ? 'Practice complete' : 'Take a short break'}
           </h2>
           <div className="space-y-4 text-slate-700">
             <p>Next: the&nbsp;
@@ -469,14 +517,13 @@ function StroopApp() {
                 <p className="font-medium text-rose-900">⏱ Timed condition - 60 seconds</p>
                 <p className="text-sm mt-1">
                   A countdown will be visible on screen. Answer as many words as you can before time runs out.
-                  The test ends automatically at 0:00.
                 </p>
               </div>
             ) : (
               <div className="bg-emerald-50 border border-emerald-200 rounded p-4">
                 <p className="font-medium text-emerald-900">∞ Untimed condition - 60 seconds</p>
                 <p className="text-sm mt-1">
-                  No timer will be shown. Just keep responding to each word - the test will end automatically when the block is over.
+                  No timer will be shown. Just keep responding to each word - the block will end automatically.
                 </p>
               </div>
             )}
@@ -498,28 +545,18 @@ function StroopApp() {
     const ss = Math.floor((timeLeftMs % 60000) / 1000);
     const timeStr = `${mm}:${ss.toString().padStart(2,'0')}`;
 
-    // ── Timer colour: green → orange (≤30 s) → red (≤10 s) ──────────────
-    const timerTextClass = timeLeftMs > 30000
-      ? 'text-green-400'
-      : timeLeftMs > 10000
-      ? 'text-orange-400'
-      : 'text-rose-400';
-    const timerBarClass = timeLeftMs > 30000
-      ? 'bg-green-500'
-      : timeLeftMs > 10000
-      ? 'bg-orange-500'
-      : 'bg-rose-500';
+    const timerTextClass = timeLeftMs > 30000 ? 'text-green-400'
+      : timeLeftMs > 10000 ? 'text-orange-400' : 'text-rose-400';
+    const timerBarClass = timeLeftMs > 30000 ? 'bg-green-500'
+      : timeLeftMs > 10000 ? 'bg-orange-500' : 'bg-rose-500';
 
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 select-none relative">
-        {/* Practice label */}
         {!isMain && (
           <div className="absolute top-6 left-1/2 -translate-x-1/2 text-slate-400 text-sm">
             Practice · Trial {practiceIdx + 1} / {PRACTICE_TRIALS}
           </div>
         )}
-
-        {/* Timer (timed condition only) – color-coded */}
         {isMain && isTimedVisible && (
           <div className="absolute top-6 left-1/2 -translate-x-1/2 flex flex-col items-center">
             <div className={`text-5xl font-mono font-bold tabular-nums transition-colors duration-500 ${timerTextClass}`}>
@@ -531,8 +568,6 @@ function StroopApp() {
             </div>
           </div>
         )}
-
-        {/* Subtle label only - no time info - for untimed */}
         {isMain && !isTimedVisible && (
           <div className="absolute top-6 left-1/2 -translate-x-1/2 text-slate-500 text-xs uppercase tracking-widest">
             Untimed Block
@@ -563,30 +598,68 @@ function StroopApp() {
     );
   }
 
+  // ---- Feedback screen (after each block) ----
+  if (screen === 'feedback') {
+    const allRated = currentRatings.difficulty && currentRatings.timePressure && currentRatings.cognitiveLoad;
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+        <div className="max-w-2xl w-full bg-white rounded-lg shadow-md p-8">
+          <h2 className="text-2xl font-bold text-slate-800 mb-2">Please Provide Your Feedback</h2>
+          <p className="text-slate-600 text-sm mb-2">
+            Thank you for completing this part of the experiment.
+            Please indicate how strongly you agree or disagree with the following statements based on your experience during the&nbsp;
+            <strong className={isTimedVisible ? 'text-rose-600' : 'text-emerald-600'}>
+              {isTimedVisible ? 'TIMED' : 'UNTIMED'}
+            </strong>&nbsp;block you just completed.
+          </p>
+          <div className="bg-slate-50 border border-slate-200 rounded p-3 mb-6 text-xs text-slate-600">
+            <strong>Response Scale:</strong> 1 = Strongly Disagree · 2 = Disagree · 3 = Neither Agree nor Disagree · 4 = Agree · 5 = Strongly Agree
+          </div>
+
+          <div className="space-y-6">
+            <div>
+              <p className="font-semibold text-slate-800 mb-1">1. Perceived Difficulty</p>
+              <p className="text-sm text-slate-600 mb-3">
+                I found this task difficult to complete successfully and felt that the task was more challenging than I expected.
+              </p>
+              <LikertRow value={currentRatings.difficulty}
+                onChange={(v) => setCurrentRatings(r => ({ ...r, difficulty: v }))} />
+            </div>
+
+            <div>
+              <p className="font-semibold text-slate-800 mb-1">2. Perceived Time Pressure</p>
+              <p className="text-sm text-slate-600 mb-3">
+                While performing this task, I felt under significant time pressure and was concerned that I might not finish before the available time ran out.
+              </p>
+              <LikertRow value={currentRatings.timePressure}
+                onChange={(v) => setCurrentRatings(r => ({ ...r, timePressure: v }))} />
+            </div>
+
+            <div>
+              <p className="font-semibold text-slate-800 mb-1">3. Subjective Cognitive Load</p>
+              <p className="text-sm text-slate-600 mb-3">
+                Completing this task required a high level of mental effort, concentration, and continuous attention throughout the entire session.
+              </p>
+              <LikertRow value={currentRatings.cognitiveLoad}
+                onChange={(v) => setCurrentRatings(r => ({ ...r, cognitiveLoad: v }))} />
+            </div>
+          </div>
+
+          <button
+            disabled={!allRated}
+            onClick={handleFeedbackSubmit}
+            className="mt-8 w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-medium py-3 rounded-md transition">
+            {blockIndex === 0 ? 'Continue to next block' : 'Submit and finish'}
+          </button>
+          {!allRated && (
+            <p className="text-xs text-slate-500 text-center mt-2">Please answer all three questions to continue.</p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (screen === 'finished') {
-    const handleDownloadTrials = () => {
-      const mainOnly = data.filter(r => r.block === 'main');
-      downloadCSV(`stroop_trials_${participant.id}.csv`, toCSV(mainOnly.length ? mainOnly : data));
-    };
-    const handleDownloadSummary = () => {
-      const sTimed   = summarize(data, 'timed');
-      const sUntimed = summarize(data, 'untimed');
-      const rows = [sTimed, sUntimed].filter(Boolean).map(s => ({
-        serial_number: serialNumber,
-        participant_id: participant.id,
-        age: participant.age, gender: participant.gender,
-        condition_order: conditionOrder,
-        condition: s.condition,
-        total_questions: s.totalQuestions,
-        correct_answers: s.correctAnswers,
-        wrong_answers: s.wrongAnswers,
-        accuracy_rate_pct: +s.accuracyRate.toFixed(2),
-        avg_rt_ms: Math.round(s.meanRT),
-        stroop_effect_ms: Math.round(s.stroopEffect),
-        performance_index: +s.performanceIndex.toFixed(2),
-      }));
-      downloadCSV(`stroop_summary_${participant.id}.csv`, toCSV(rows));
-    };
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
         <div className="max-w-md w-full text-center">
@@ -599,36 +672,19 @@ function StroopApp() {
                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
                 </svg>
-                Sending data to server&#8230;
+                Sending data&#8230;
               </div>
             )}
             {submitStatus === 'ok' && (
-              <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-3 text-emerald-700 text-sm font-medium">
-                &#10003; Data sent to Google Sheet successfully.
+              <div className="text-emerald-600 text-sm font-medium">
+                &#10003; Data submitted.
               </div>
             )}
             {submitStatus === 'error' && (
-              <div className="bg-rose-50 border border-rose-200 rounded-lg px-4 py-3 text-left">
-                <p className="text-rose-700 font-medium text-sm">&#9888; Could not reach the server.</p>
-                <p className="text-rose-600 text-xs mt-1">
-                  Download the CSV backup below and send it to the researcher.
-                </p>
+              <div className="text-rose-600 text-sm">
+                Upload issue &mdash; please notify the researcher (session: <span className="font-mono">{participant.id}</span>).
               </div>
             )}
-          </div>
-          <div className="mt-6 bg-white border border-slate-200 rounded-lg p-4">
-            <p className="text-sm font-medium text-slate-700 mb-3">CSV backup &#8212; always available</p>
-            <div className="flex gap-3 justify-center">
-              <button onClick={handleDownloadTrials}
-                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium py-2 px-3 rounded-md transition">
-                &#8595; Trial data
-              </button>
-              <button onClick={handleDownloadSummary}
-                className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium py-2 px-3 rounded-md transition">
-                &#8595; Summary
-              </button>
-            </div>
-            <p className="text-xs text-slate-400 mt-3">Session ID: {participant.id}</p>
           </div>
         </div>
       </div>
