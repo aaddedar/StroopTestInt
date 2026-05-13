@@ -27,8 +27,9 @@ const APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzlXZaOBOFZ8k5n
 // ---------- Experiment configuration ----------
 const COLORS = [
   { name: 'RED',    hex: '#dc2626', key: 'r' },
-  { name: 'GREEN',  hex: '#16a34a', key: 'g' },
   { name: 'BLUE',   hex: '#2563eb', key: 'b' },
+  { name: 'GREEN',  hex: '#16a34a', key: 'g' },
+  { name: 'BLACK',  hex: '#1f2937', key: 'k' },
   { name: 'YELLOW', hex: '#ca8a04', key: 'y' },
 ];
 const PRACTICE_TRIALS   = 8;
@@ -347,7 +348,7 @@ function StroopApp() {
     const onKey = (e) => {
       if (phase !== 'stimulus') return;
       const k = e.key.toLowerCase();
-      if (['r','g','b','y'].includes(k)) recordResponse(k);
+      if (['r','g','b','k','y'].includes(k)) recordResponse(k);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -367,7 +368,7 @@ function StroopApp() {
     // Read from the ref so we always have the latest values, regardless of React batching
     const fbTimed   = feedbackRef.current.timed   || {};
     const fbUntimed = feedbackRef.current.untimed || {};
-    console.log('[Stroop] Feedback being submitted — timed:', fbTimed, 'untimed:', fbUntimed);
+    console.log('[Stroop] Feedback being submitted - timed:', fbTimed, 'untimed:', fbUntimed);
 
     // Build ONE row per session containing both conditions
     const fields = (prefix, s, fb) => ({
@@ -407,7 +408,7 @@ function StroopApp() {
     try {
       const key = `stroop_${participant.id}_${Date.now()}`;
       localStorage.setItem(key, JSON.stringify(payload));
-    } catch (e) { /* quota or private mode — ignore */ }
+    } catch (e) { /* quota or private mode - ignore */ }
 
     try {
       // Use no-cors (Apps Script returns a 302 redirect to the actual content
@@ -481,23 +482,24 @@ function StroopApp() {
           <div className="space-y-4 text-slate-700">
             <p>Color words will appear one at a time:&nbsp;
               <span style={{color:'#dc2626'}} className="font-bold">RED</span>,&nbsp;
+              <span style={{color:'#2563eb'}} className="font-bold">BLUE</span>,&nbsp;
               <span style={{color:'#16a34a'}} className="font-bold">GREEN</span>,&nbsp;
-              <span style={{color:'#2563eb'}} className="font-bold">BLUE</span>, and&nbsp;
+              <span style={{color:'#1f2937'}} className="font-bold">BLACK</span>, and&nbsp;
               <span style={{color:'#ca8a04'}} className="font-bold">YELLOW</span>.
             </p>
-            <p className="font-medium">Respond with the <u>INK COLOR</u> the word is printed in - <u>not</u> what the word says.</p>
-            <div className="bg-slate-100 rounded p-4">
-              <p className="font-medium mb-2">Use these keys:</p>
-              <div className="grid grid-cols-4 gap-3 text-center">
-                <div><kbd className="px-2 py-1 bg-white border border-slate-300 rounded font-bold">R</kbd><div className="text-sm mt-1" style={{color:'#dc2626'}}>Red</div></div>
-                <div><kbd className="px-2 py-1 bg-white border border-slate-300 rounded font-bold">G</kbd><div className="text-sm mt-1" style={{color:'#16a34a'}}>Green</div></div>
-                <div><kbd className="px-2 py-1 bg-white border border-slate-300 rounded font-bold">B</kbd><div className="text-sm mt-1" style={{color:'#2563eb'}}>Blue</div></div>
-                <div><kbd className="px-2 py-1 bg-white border border-slate-300 rounded font-bold">Y</kbd><div className="text-sm mt-1" style={{color:'#ca8a04'}}>Yellow</div></div>
-              </div>
+            <p className="font-medium">Click the button that matches the <u>INK COLOR</u> of the displayed word &mdash; <u>not</u> what the word says.</p>
+            <div className="bg-slate-50 rounded p-5 flex justify-center gap-3 flex-wrap">
+              {COLORS.map(c => (
+                <div key={c.name}
+                  className="w-16 h-16 rounded-full flex items-center justify-center text-white font-bold text-xs"
+                  style={{ backgroundColor: c.hex }}>
+                  {c.name}
+                </div>
+              ))}
             </div>
-            <p>Example: <span style={{color:'#2563eb'}} className="font-bold text-xl">RED</span> &rarr; press&nbsp;
-              <kbd className="px-2 py-1 bg-slate-100 border border-slate-300 rounded font-bold">B</kbd> (ink is blue).</p>
-            <p>Short <strong>{PRACTICE_TRIALS}-trial practice</strong> first, then <strong>two 60-second blocks</strong>.
+            <p>Example: if you see <span style={{color:'#2563eb'}} className="font-bold text-xl">RED</span>, click the&nbsp;
+              <span className="inline-block px-2 py-0.5 rounded-full text-white text-xs font-bold align-middle" style={{backgroundColor:'#2563eb'}}>BLUE</span> button (the ink is blue).</p>
+            <p>Short <strong>{PRACTICE_TRIALS}-trial practice</strong> first, then <strong>two 60-second blocks</strong> with a pause in between.
               After each block you'll answer 3 short feedback questions.</p>
           </div>
           <button onClick={startPractice}
@@ -510,8 +512,6 @@ function StroopApp() {
   }
 
   if (screen === 'break') {
-    const order = conditionOrder === 'timed_first' ? ['timed','untimed'] : ['untimed','timed'];
-    const upcoming = order[blockIndex];
     const isPostPractice = data.every(d => d.block === 'practice');
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
@@ -520,31 +520,20 @@ function StroopApp() {
             {isPostPractice ? 'Practice complete' : 'Take a short break'}
           </h2>
           <div className="space-y-4 text-slate-700">
-            <p>Next: the&nbsp;
-              <strong className={upcoming === 'timed' ? 'text-rose-600' : 'text-emerald-600'}>
-                {upcoming === 'timed' ? 'TIMED (timer visible)' : 'UNTIMED (no timer)'}
-              </strong>&nbsp;block - 60 seconds.
+            <p>
+              {isPostPractice
+                ? 'You are about to begin the first 60-second block.'
+                : 'You are about to begin the second 60-second block.'}
             </p>
-            {upcoming === 'timed' ? (
-              <div className="bg-rose-50 border border-rose-200 rounded p-4">
-                <p className="font-medium text-rose-900">⏱ Timed condition - 60 seconds</p>
-                <p className="text-sm mt-1">
-                  A countdown will be visible on screen. Answer as many words as you can before time runs out.
-                </p>
-              </div>
-            ) : (
-              <div className="bg-emerald-50 border border-emerald-200 rounded p-4">
-                <p className="font-medium text-emerald-900">∞ Untimed condition - 60 seconds</p>
-                <p className="text-sm mt-1">
-                  No timer will be shown. Just keep responding to each word - the block will end automatically.
-                </p>
-              </div>
-            )}
-            <p className="text-sm text-slate-500">Trials appear continuously - as soon as you press a key, the next word appears.</p>
+            <p>Click the colored button that matches the <strong>ink color</strong> of each word.
+              Trials appear continuously &mdash; as soon as you click, the next word appears.</p>
+            <p className="text-sm text-slate-500">
+              After this block you'll answer 3 short feedback questions.
+            </p>
           </div>
           <button onClick={startMainBlock}
             className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-md transition">
-            Start {upcoming === 'timed' ? 'Timed' : 'Untimed'} block
+            {isPostPractice ? 'Start first block' : 'Start second block'}
           </button>
         </div>
       </div>
@@ -558,54 +547,75 @@ function StroopApp() {
     const ss = Math.floor((timeLeftMs % 60000) / 1000);
     const timeStr = `${mm}:${ss.toString().padStart(2,'0')}`;
 
-    const timerTextClass = timeLeftMs > 30000 ? 'text-green-400'
-      : timeLeftMs > 10000 ? 'text-orange-400' : 'text-rose-400';
-    const timerBarClass = timeLeftMs > 30000 ? 'bg-green-500'
-      : timeLeftMs > 10000 ? 'bg-orange-500' : 'bg-rose-500';
+    const timerTextClass = timeLeftMs > 30000 ? 'text-emerald-600'
+      : timeLeftMs > 10000 ? 'text-amber-600' : 'text-rose-600';
+    const timerBarClass = timeLeftMs > 30000 ? 'bg-emerald-500'
+      : timeLeftMs > 10000 ? 'bg-amber-500' : 'bg-rose-500';
+
+    const isClickable = phase === 'stimulus';
 
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 select-none relative">
+      <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6 select-none relative">
+        {/* Practice counter */}
         {!isMain && (
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 text-slate-400 text-sm">
-            Practice · Trial {practiceIdx + 1} / {PRACTICE_TRIALS}
+          <div className="absolute top-6 left-1/2 -translate-x-1/2 text-slate-500 text-sm font-medium">
+            Practice &middot; Trial {practiceIdx + 1} / {PRACTICE_TRIALS}
           </div>
         )}
+
+        {/* Timer - only in timed condition */}
         {isMain && isTimedVisible && (
           <div className="absolute top-6 left-1/2 -translate-x-1/2 flex flex-col items-center">
             <div className={`text-5xl font-mono font-bold tabular-nums transition-colors duration-500 ${timerTextClass}`}>
               {timeStr}
             </div>
-            <div className="w-64 bg-slate-800 rounded-full h-2 mt-2">
+            <div className="w-64 bg-slate-200 rounded-full h-2 mt-2">
               <div className={`h-2 rounded-full transition-all duration-300 ${timerBarClass}`}
                 style={{ width: `${(timeLeftMs / BLOCK_DURATION_MS) * 100}%` }} />
             </div>
           </div>
         )}
-        {isMain && !isTimedVisible && (
-          <div className="absolute top-6 left-1/2 -translate-x-1/2 text-slate-500 text-xs uppercase tracking-widest">
-            Untimed Block
-          </div>
-        )}
 
-        <div className="h-64 flex items-center justify-center">
-          {phase === 'fixation' && <div className="text-6xl text-slate-500 font-light">+</div>}
+        {/* Stimulus area */}
+        <div className="h-48 flex items-center justify-center mb-8">
+          {phase === 'fixation' && <div className="text-7xl text-slate-300 font-light">+</div>}
           {phase === 'stimulus' && currentTrial && (
-            <div className="text-7xl font-bold tracking-wide" style={{color: currentTrial.inkHex}}>
-              {currentTrial.word}
+            <div className="font-bold tracking-wide" style={{
+              color: currentTrial.inkHex,
+              fontSize: '8rem',
+              lineHeight: '1',
+            }}>
+              {currentTrial.word.charAt(0) + currentTrial.word.slice(1).toLowerCase()}
             </div>
           )}
           {phase === 'iti' && screen === 'practice' && practiceFeedback && (
-            <div className={`text-3xl font-medium ${practiceFeedback === 'correct' ? 'text-emerald-400' : 'text-rose-400'}`}>
-              {practiceFeedback === 'correct' ? '✓ Correct' : '✗ Incorrect'}
+            <div className={`text-4xl font-semibold ${practiceFeedback === 'correct' ? 'text-emerald-500' : 'text-rose-500'}`}>
+              {practiceFeedback === 'correct' ? '\u2713 Correct' : '\u2717 Incorrect'}
             </div>
           )}
         </div>
 
-        <div className="mt-12 flex gap-3 text-slate-400 text-sm">
-          <span><kbd className="px-2 py-1 bg-slate-800 rounded text-slate-200">R</kbd> Red</span>
-          <span><kbd className="px-2 py-1 bg-slate-800 rounded text-slate-200">G</kbd> Green</span>
-          <span><kbd className="px-2 py-1 bg-slate-800 rounded text-slate-200">B</kbd> Blue</span>
-          <span><kbd className="px-2 py-1 bg-slate-800 rounded text-slate-200">Y</kbd> Yellow</span>
+        {/* Color buttons */}
+        <div className="flex gap-4 flex-wrap justify-center">
+          {COLORS.map(c => (
+            <button key={c.name}
+              type="button"
+              onClick={() => recordResponse(c.key)}
+              disabled={!isClickable}
+              className={`w-24 h-24 rounded-full flex items-center justify-center text-white font-bold text-sm shadow-lg transition-transform ${
+                isClickable ? 'hover:scale-110 active:scale-95 cursor-pointer' : 'opacity-50 cursor-default'
+              }`}
+              style={{ backgroundColor: c.hex }}>
+              {c.name}
+            </button>
+          ))}
+        </div>
+
+        {/* Helper text */}
+        <div className="mt-10 max-w-2xl text-center">
+          <div className="bg-blue-50 border border-blue-100 rounded-lg px-5 py-3 text-slate-600 text-sm">
+            Click the button that matches the <span className="font-semibold">COLOR</span> of the displayed word, not the word itself!
+          </div>
         </div>
       </div>
     );
